@@ -16,10 +16,11 @@
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <header class="topbar"><h1 id="title">Inventory</h1><div id="top-actions"></div></header>
+  <header class="topbar"><h1 id="title">Offer</h1><div id="top-actions"></div></header>
   <main id="main" class="main" aria-live="polite"></main>
   <nav class="tabbar" aria-label="Main">
-    <a href="#/inventory" data-tab="inventory"><span class="ti">&#9776;</span>Inventory</a>
+    <a href="#/offer" data-tab="offer" data-testid="tab-offer"><span class="ti">&#36;</span>Offer</a>
+    <a href="#/inventory" data-tab="inventory" data-testid="tab-inventory"><span class="ti">&#9776;</span>Inventory</a>
     <a href="#/new" data-tab="new"><span class="ti">&#65291;</span>Add</a>
     <a href="#/settings" data-tab="settings"><span class="ti">&#9881;</span>Backup</a>
   </nav>
@@ -28,6 +29,8 @@
   <input id="import-file" type="file" accept="application/json,.json" hidden>
   <script src="./calc.js"></script>
   <script src="./db.js"></script>
+  <script src="./offer.js"></script>
+  <script src="./offer-ui.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

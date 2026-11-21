@@ -1,6 +1,6 @@
 /* Juan CRM service worker: cache-first app shell, works offline. CACHE is stamped by the build. */
-const CACHE = 'juan-crm-1.0.0-2e88fec3a1';
-const SHELL = ['./', './index.html', './styles.css', './calc.js', './db.js', './app.js', './manifest.json',
+const CACHE = 'juan-crm-1.1.0-288902e652';
+const SHELL = ['./', './index.html', './styles.css', './calc.js', './db.js', './offer.js', './offer-ui.js', './app.js', './data/prices.json', './manifest.json',
   './icons/apple-touch-icon.png', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'];
 
 self.addEventListener('install', (e) => {

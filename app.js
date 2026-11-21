@@ -1,11 +1,11 @@
-/* Juan CRM - UI (no framework). Hash routes: #/inventory  #/new  #/item/:id  #/edit/:id  #/settings */
+/* Juan CRM - UI (no framework). Hash routes: #/offer (default)  #/inventory  #/new  #/item/:id  #/edit/:id  #/settings */
 (function () {
   'use strict';
   const DB = window.CrmDB, C = window.CrmCalc;
   const $ = (sel, el) => (el || document).querySelector(sel);
   const $$ = (sel, el) => Array.from((el || document).querySelectorAll(sel));
   const main = $('#main');
-  const state = { filter: { q: '', status: '', category: '' }, settings: {} };
+  const state = { filter: { q: '', status: '', category: '' }, settings: {}, prices: null, prefill: null };
 
   const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const money = C.formatMoney;
@@ -42,6 +42,38 @@
     if (it.category === 'phone') return [it.storage, it.color, it.carrier, it.condition].filter(Boolean).join(' · ');
     if (it.category === 'dts') return [it.brand, it.boxSize, it.qty > 1 ? 'x' + it.qty : '', it.expirationDate ? 'exp ' + it.expirationDate : ''].filter(Boolean).join(' · ');
     return [it.brand, it.condition, it.qty > 1 ? 'x' + it.qty : ''].filter(Boolean).join(' · ');
+  }
+
+  // ---------- Offer ----------
+  async function renderOffer() {
+    setTab('offer'); setTop('Offer', '');
+    main.innerHTML = '<div id="offer-root"></div>';
+    if (!state.prices) await loadPrices();
+    if (!state.prices) { main.innerHTML = '<div class="card err">Price sheets could not be loaded. Open the app once while online.</div>'; return; }
+    window.CrmOfferUI.setBundle(state.prices);
+    window.CrmOfferUI.mount($('#offer-root'), {
+      addToInventory: (p) => { state.prefill = p; location.hash = '#/new'; },
+    });
+  }
+
+  // Bundled sheet (data/prices.json) is saved into the priceSheets store (schema v2) the first time a new date ships.
+  // The Offer tab uses the newest sheet in the store; future uploads add new versions there.
+  async function loadPrices() {
+    let stored = null, bundled = null;
+    try { stored = await DB.getLatestPriceSheet('offer-bundle'); } catch (e) { console.warn(e); }
+    try {
+      const res = await fetch('./data/prices.json');
+      if (res.ok) bundled = await res.json();
+    } catch (e) { /* offline and not cached */ }
+    if (bundled && (!stored || String(bundled.sheetDate) > String(stored.sheetDate))) {
+      try {
+        stored = await DB.savePriceSheet({ id: 'offer-bundle-' + bundled.sheetDate, kind: 'offer-bundle', sheetDate: bundled.sheetDate,
+          source: 'Bundled with app: ' + bundled.sources.fixit.buyer + ' + ' + bundled.sources.dts.buyer + ' sheets', buyers: [bundled.sources.fixit.buyer, bundled.sources.dts.buyer], rows: bundled });
+      } catch (e) { console.warn('Could not store price sheet', e); }
+    }
+    state.prices = (stored && stored.rows) || bundled || null;
+    if (state.prices && stored) state.prices.sourceLabel = stored.source.replace(/^Bundled with app: /, '');
+    return state.prices;
   }
 
   // ---------- Inventory list ----------
@@ -129,9 +161,11 @@
   async function renderForm(id) {
     const existing = id ? await DB.getItem(id) : null;
     if (id && !existing) { main.innerHTML = '<div class="empty">Record not found.</div>'; return; }
+    const pre = !existing && state.prefill ? state.prefill : null;
+    state.prefill = null;
     setTab(existing ? 'inventory' : 'new');
-    setTop(existing ? 'Edit item' : 'Add item', '<a href="' + (existing ? '#/item/' + encodeURIComponent(id) : '#/inventory') + '">Cancel</a> <button type="submit" form="f" data-testid="save-top">Save</button>');
-    const it = existing || Object.assign({}, DB.INVENTORY_FIELDS, { purchaseDate: today(), category: state.lastCategory || 'phone' });
+    setTop(existing ? 'Edit item' : pre ? 'Add from offer' : 'Add item', '<a href="' + (existing ? '#/item/' + encodeURIComponent(id) : '#/inventory') + '">Cancel</a> <button type="submit" form="f" data-testid="save-top">Save</button>');
+    const it = existing || Object.assign({}, DB.INVENTORY_FIELDS, { purchaseDate: today(), category: state.lastCategory || 'phone' }, pre || {});
     const r = rules();
     main.innerHTML =
       '<form id="f" novalidate data-cat-current="' + it.category + '">' +
@@ -174,7 +208,7 @@
     const form = $('#f');
     const val = (n) => { const el = form.elements[n]; return el ? el.value : ''; };
     const cat = () => (form.querySelector('input[name=category]:checked') || {}).value || 'phone';
-    let offerTouched = existing ? it.offer != null : false;
+    let offerTouched = (existing || pre) ? it.offer != null : false;
 
     function applyCategory() {
       const c = cat();
@@ -276,6 +310,7 @@
         '<div class="actions"><button class="btn primary" id="export" data-testid="export-btn">Export backup</button>' +
         '<button class="btn" id="import" data-testid="import-btn">Import backup</button></div>' +
         '<div id="dl-fallback" class="small" style="margin-top:8px"></div></div>' +
+      '<div class="card"><h3 style="margin:0 0 6px">Price sheets</h3><div id="sheets" class="small" data-testid="sheets">Loading...</div></div>' +
       '<div class="card"><h3 style="margin:0 0 6px">Storage</h3><div id="storage" class="small" data-testid="storage">Checking...</div></div>' +
       '<div class="card"><h3 style="margin:0 0 6px">Offer rules</h3><form id="rules" class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
         '<label>Phone: sheet minus ($)<input name="phoneOfferDiscount" inputmode="decimal" value="' + esc(r.phoneOfferDiscount) + '"></label>' +
@@ -293,6 +328,10 @@
       toast('Offer rules saved');
     });
     showStorage();
+    DB.listPriceSheets().then((list) => {
+      const el = $('#sheets'); if (!el) return;
+      el.innerHTML = list.length ? list.map((x) => '<div>Sheet date <b>' + esc(x.sheetDate) + '</b> · ' + esc(x.source) + '<br><span class="muted">Saved ' + esc(new Date(x.uploadedAt).toLocaleString()) + '</span></div>').join('<hr>') : 'None stored yet (open the Offer tab once).';
+    });
   }
 
   async function showStorage() {
@@ -351,7 +390,7 @@
     const choice = await modal('Import backup?',
       '<p class="small">File: <b>' + esc(file.name) + '</b><br>Exported: ' + esc(v.exportedAt ? new Date(v.exportedAt).toLocaleString() : 'unknown') +
       '<br>Schema v' + v.schemaVersion + '</p>' +
-      '<p data-testid="import-counts">Backup contains <b>' + v.counts.inventory + '</b> inventory records (' + v.counts.meta + ' settings rows).<br>This phone has <b>' + current + '</b> records now.</p>' +
+      '<p data-testid="import-counts">Backup contains <b>' + v.counts.inventory + '</b> inventory records (' + v.counts.meta + ' settings rows, ' + (v.counts.priceSheets || 0) + ' price sheets).<br>This phone has <b>' + current + '</b> records now.</p>' +
       '<p class="small muted"><b>Merge</b> adds new records and updates ones with the same id (newer edit wins). <b>Replace all</b> deletes everything on this phone first.</p>',
       [{ id: 'merge', text: 'Merge (by id)', cls: 'primary' }, { id: 'replace', text: 'Replace all', cls: 'danger' }, { id: 'cancel', text: 'Cancel' }]);
     if (!choice) return;
@@ -381,7 +420,8 @@
       else if (page === 'edit' && id) await renderForm(decodeURIComponent(id));
       else if (page === 'item' && id) await renderView(decodeURIComponent(id));
       else if (page === 'settings') await renderSettings();
-      else await renderList();
+      else if (page === 'inventory') await renderList();
+      else await renderOffer();
     } catch (err) {
       console.warn(err);
       main.innerHTML = '<div class="card err">Something went wrong: ' + esc(err && err.message) + '</div>';
