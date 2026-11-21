@@ -1,0 +1,26 @@
+# Decodes icons-b64/*.b64 into icons/*.png (binary files can't be pushed through the text-only API used to publish),
+# verifies checksums, and commits them. Runs on push when the encoded icons change, or manually.
+name: decode-icons
+on:
+  push:
+    branches: [main]
+    paths: ['icons-b64/**']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  decode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode and verify
+        run: |
+          mkdir -p icons
+          for f in icons-b64/*.b64; do base64 -d "$f" > "icons/$(basename "$f" .b64)"; done
+          sha256sum -c icons-b64/SHA256SUMS
+      - name: Commit icons
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add icons
+          git diff --cached --quiet && echo "icons unchanged" || (git commit -m "Decode PNG icons" && git push)
