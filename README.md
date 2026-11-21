@@ -4,4 +4,5 @@ Built output of a personal, offline-first CRM web app. Served with GitHub Pages 
 https://phonemoola-star.github.io/crm/ . All user data is stored only on the device (IndexedDB);
 this repository contains app code only, no data.
 
-`icons/` PNGs are produced from `icons-b64/` by `.github/workflows/icons.yml`.
+`icons/` PNGs are produced from `icons-b64/` by `.github/workflows/icons.yml`, which also mirrors `main` to the
+`gh-pages` branch that GitHub Pages serves. Publish by pushing to `main`.
