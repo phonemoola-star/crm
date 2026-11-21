@@ -18,12 +18,13 @@
   'use strict';
 
   const APP_ID = 'juan-crm';
-  const APP_VERSION = '1.0.0';
+  const APP_VERSION = '1.1.0';
   const DB_NAME = 'juan-crm-db';
-  const SCHEMA_VERSION = 1;
+  const SCHEMA_VERSION = 2;
   const STORE_INVENTORY = 'inventory';
   const STORE_META = 'meta';
-  const STORES = [STORE_INVENTORY, STORE_META];
+  const STORE_PRICESHEETS = 'priceSheets';
+  const STORES = [STORE_INVENTORY, STORE_META, STORE_PRICESHEETS];
 
   const CATEGORIES = [
     { id: 'phone', label: 'Phone' },
@@ -51,11 +52,19 @@
       inv.createIndex('buyerId', 'buyerId', { unique: false });
       db.createObjectStore(STORE_META, { keyPath: 'key' });
     },
+    // v2 (Step 2, Offer tab): additive store for uploaded / bundled buyer price sheets. Inventory untouched.
+    2: function (db) {
+      if (!db.objectStoreNames.contains(STORE_PRICESHEETS)) {
+        const ps = db.createObjectStore(STORE_PRICESHEETS, { keyPath: 'id' });
+        ps.createIndex('sheetDate', 'sheetDate', { unique: false });
+        ps.createIndex('kind', 'kind', { unique: false });
+      }
+    },
   };
 
   // Backup-file migrations: upgrade an exported JSON from older schemaVersion to current.
   const BACKUP_MIGRATIONS = {
-    // 2: function (backup) { backup.stores.contacts = backup.stores.contacts || []; return backup; },
+    2: function (backup) { backup.stores.priceSheets = backup.stores.priceSheets || []; return backup; },
   };
 
   // Every inventory field. Records are plain objects; unknown extra fields are preserved.
@@ -263,6 +272,27 @@
     return tx(STORE_INVENTORY, 'readwrite', function (s) { s[STORE_INVENTORY].delete(id); });
   }
 
+  // ----- price sheets (v2) -----
+  function savePriceSheet(rec) {
+    if (!rec || !rec.id) return Promise.reject(new Error('Price sheet needs an id'));
+    const r = Object.assign({ uploadedAt: nowIso() }, rec);
+    return tx(STORE_PRICESHEETS, 'readwrite', function (s) { s[STORE_PRICESHEETS].put(r); }).then(function () { return r; });
+  }
+  function getPriceSheet(id) { return get(STORE_PRICESHEETS, id); }
+  function listPriceSheets() {
+    return getAll(STORE_PRICESHEETS).then(function (rows) {
+      return rows.map(function (r) { return { id: r.id, kind: r.kind, sheetDate: r.sheetDate, uploadedAt: r.uploadedAt, source: r.source, buyers: r.buyers }; })
+        .sort(function (a, b) { return String(b.sheetDate).localeCompare(String(a.sheetDate)) || String(b.uploadedAt).localeCompare(String(a.uploadedAt)); });
+    });
+  }
+  function getLatestPriceSheet(kind) {
+    return getAll(STORE_PRICESHEETS).then(function (rows) {
+      const list = rows.filter(function (r) { return !kind || r.kind === kind; })
+        .sort(function (a, b) { return String(b.sheetDate).localeCompare(String(a.sheetDate)) || String(b.uploadedAt).localeCompare(String(a.uploadedAt)); });
+      return list[0] || null;
+    });
+  }
+
   // ----- backup -----
   function exportBackup() {
     return tx(STORES, 'readonly', function (s) {
@@ -289,6 +319,9 @@
       });
       (Array.isArray(data.stores[STORE_INVENTORY]) ? data.stores[STORE_INVENTORY] : []).forEach(function (r, i) {
         if (!r || typeof r !== 'object' || typeof r.id !== 'string' || !r.id) errors.push('Inventory record #' + (i + 1) + ' has no id.');
+      });
+      (Array.isArray(data.stores[STORE_PRICESHEETS]) ? data.stores[STORE_PRICESHEETS] : []).forEach(function (r, i) {
+        if (!r || typeof r !== 'object' || typeof r.id !== 'string' || !r.id) errors.push('Price sheet #' + (i + 1) + ' has no id.');
       });
       (Array.isArray(data.stores[STORE_META]) ? data.stores[STORE_META] : []).forEach(function (r, i) {
         if (!r || typeof r !== 'object' || typeof r.key !== 'string') errors.push('Meta record #' + (i + 1) + ' has no key.');
@@ -320,12 +353,21 @@
     const b = migrateBackup(data);
     const inv = b.stores[STORE_INVENTORY] || [];
     const meta = (b.stores[STORE_META] || []).filter(function (m) { return PROTECTED_META.indexOf(m.key) === -1; });
-    const result = { mode: mode, added: 0, updated: 0, skipped: 0, removed: 0 };
+    const sheets = b.stores[STORE_PRICESHEETS] || [];
+    const result = { mode: mode, added: 0, updated: 0, skipped: 0, removed: 0, priceSheets: 0 };
 
-    return getAll(STORE_INVENTORY).then(function (current) {
+    return Promise.all([getAll(STORE_INVENTORY), getAll(STORE_PRICESHEETS)]).then(function (both) {
+      const current = both[0];
+      const sheetIds = {};
+      both[1].forEach(function (r) { sheetIds[r.id] = r; });
       const byId = {};
       current.forEach(function (r) { byId[r.id] = r; });
       return tx(STORES, 'readwrite', function (s) {
+        // Price sheets: replace keeps the backup's set (plus nothing else); merge adds ones not already here.
+        if (mode === 'replace' && sheets.length) s[STORE_PRICESHEETS].clear();
+        sheets.forEach(function (r) {
+          if (mode === 'replace' || !sheetIds[r.id]) { s[STORE_PRICESHEETS].put(r); result.priceSheets++; }
+        });
         if (mode === 'replace') {
           result.removed = current.length;
           s[STORE_INVENTORY].clear();
@@ -353,11 +395,12 @@
   }
 
   return {
-    APP_ID, APP_VERSION, DB_NAME, SCHEMA_VERSION, STORES, STORE_INVENTORY, STORE_META,
+    APP_ID, APP_VERSION, DB_NAME, SCHEMA_VERSION, STORES, STORE_INVENTORY, STORE_META, STORE_PRICESHEETS,
     CATEGORIES, STATUSES, INVENTORY_FIELDS, MIGRATIONS, BACKUP_MIGRATIONS,
     configure, openDb, close, deleteDatabase,
     getMeta, setMeta, getSettings, saveSettings, getSchemaVersion,
     normalizeItem, saveItem, getItem, listItems, deleteItem,
+    savePriceSheet, getPriceSheet, listPriceSheets, getLatestPriceSheet,
     exportBackup, validateBackup, migrateBackup, importBackup,
   };
 });
