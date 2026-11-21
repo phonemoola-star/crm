@@ -1,9 +1,9 @@
 {
   "name": "Juan CRM",
   "short_name": "Juan CRM",
-  "description": "Personal CRM: phone and diabetic-supply inventory, stored on this device.",
+  "description": "Personal CRM: offer lookup and inventory for phones, electronics and diabetic supplies, stored on this device.",
   "id": "./",
-  "start_url": "./#/inventory",
+  "start_url": "./#/offer",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
